@@ -65,3 +65,7 @@ class Transformer(nn.Module):
         h = self.norm(h)
         output = self.output(h).float()
         return output
+
+
+def pre_compute_theta_pos_frequencies(head_size, seq_len, device):
+    pass
