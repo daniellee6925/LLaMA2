@@ -67,6 +67,47 @@ class Transformer(nn.Module):
         return output
 
 
+class RSMNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6) -> None:
+        super().__init__()
+        self.eps = eps
+        # gamma parameter
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def norm(self, x: torch.Tensor):
+        # (B, seq_len, dim) * (B, seq_len , 1) -> (B, seq_len, dim)
+        # rsqrt: 1 / sqrt(x)
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+
+    def forward(self, x):
+        # (B, seq_len, dim)
+        return self.weight * self.norm(x.float()).type_as(x)
+
+
+class EncoderBlock(nn.Module):
+    def __init__(self, args: ModelArgs) -> None:
+        super().__init__()
+        self.n_heads = args.n_heads
+        self.dim = args.dim
+        self.head_dim = args.dim // args.n_heads
+
+        self.attention = SelfAttention(args)
+        self.feed_forward = FeedForward(args)
+
+        # normalization before self attention block
+        self.attention_norm = RSMNorm(args.dim, eps=args.norm_eps)
+        # normalization before the feed forward block
+        self.ffn_norm = RSMNorm(args.dim, eps=args.norm_eps)
+
+    def forward(self, x: torch.Tensor, start_pos: int, freq_complex: torch.Tensor):
+        # (B, seq_len, dim) + (B, seq_len, dim) -> (B, seq_len, dim)
+        h = x + self.attention.forward(self.attention_norm(x), start_pos, freq_complex)
+        out = h + self.feed_forward(self.ffn_norm(x), start_pos, freq_complex)
+        return out
+
+class SelfAttention(nn.Module):
+    
+
 def pre_compute_theta_pos_frequencies(
     head_dim: int, seq_len: int, device: str, theta: float = 10000
 ):
