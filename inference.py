@@ -18,3 +18,8 @@ class LLaMA:
         self.model = model
         self.tokenzier = tokenzier
         self.args = ModelArgs
+
+    @staticmethod 
+    def build(checkpoints_dir: str, tokenizer_path: str, load_model: bool, max_seq_len: int, device: str):
+        
+        
