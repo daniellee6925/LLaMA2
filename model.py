@@ -108,7 +108,7 @@ class EncoderBlock(nn.Module):
 
 class SelfAttention(nn.Module):
     def __init__(self, args: ModelArgs):
-        super.__init__()
+        super().__init__()
         # number of heads for key and value matrices
         self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
         # number of heads for query matrix
@@ -119,8 +119,8 @@ class SelfAttention(nn.Module):
         self.head_dim = args.dim // args.n_heads
 
         self.wq = nn.Linear(args.dim, args.n_heads * self.head_dim, bias=False)
-        self.wk = nn.Linear(args.dim, args.n_kv_heads * self.head_dim, bias=False)
-        self.wv = nn.Linear(args.dim, args.n_kv_heads * self.head_dim, bias=False)
+        self.wk = nn.Linear(args.dim, self.n_kv_heads * self.head_dim, bias=False)
+        self.wv = nn.Linear(args.dim, self.n_kv_heads * self.head_dim, bias=False)
         # to ensure dimension matches
         self.wo = nn.Linear(args.n_heads * self.head_dim, args.dim, bias=False)
 
@@ -188,7 +188,7 @@ class SelfAttention(nn.Module):
 
 class FeedForward(nn.Module):
     def __init__(self, args: ModelArgs):
-        super.__init__()
+        super().__init__()
         hidden_dim = 4 * args.dim
         hidden_dim = int(2 * hidden_dim / 3)
         if args.ffn_dim_multiplier is not None:
