@@ -137,6 +137,17 @@ class LLaMA:
             if self.tokenzier.eos_id() in current_prompt_tokens:
                 eos_idx = current_prompt_tokens.index(self.tokenzier.eos_id())
                 current_prompt_tokens = current_prompt_tokens[:eos_idx]
+            out_tokens.append(current_prompt_tokens)
+            out_text.append(self.tokenzier.Decode(current_prompt_tokens))
+        return (out_tokens, out_text)
+
+    def _sample_top_p(self, probs, p):
+        probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
+        probs_sum = torch.cumsum(probs_sort, dim=-1)
+        mask = probs_sum - probs_sort > p
+        probs_sort[mask] = 0.0
+        probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
+        next_token = torch.multinomial(probs_sort, num_samples=1)
 
 
 if __name__ == "__main__":
