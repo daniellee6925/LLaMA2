@@ -1,6 +1,7 @@
 from typing import Optional
 import torch
 import time
+import tqdm
 from pathlib import Path
 import json
 from sentencepiece import SentencePieceProcessor
@@ -64,12 +65,87 @@ class LLaMA:
 
         return LLaMA(model, tokenizer, model_args)
 
+    def text_completion(
+        self,
+        prompts: list[str],
+        temperature: float = 0.6,
+        top_p: float = 0.9,
+        max_gen_len: Optional[int] = None,
+    ):
+        if max_gen_len is None:
+            max_gen_len = self.args.max_seq_len - 1
+        # convert each prompt to tokens
+        prompt_tokens = [
+            self.tokenzier.encode(prompt, out_type=int, add_bos=True, add_eos=False)
+            for prompt in prompts
+        ]
+        # make sure batch size is not too long
+        batch_size = len(prompts)
+        assert batch_size <= self.args.max_batch_size
+
+        max_prompt_len = max(len(prompt) for prompt in prompt_tokens)
+        # make sure max_prompt_len is less than max_seq_len
+        assert max_prompt_len <= self.args.max_seq_len
+
+        total_len = min(self.args.max_seq_len, max_gen_len + max_prompt_len)
+
+        # create a list that will contain the generated tokens along with the initial prompt tokens
+        pad_id = self.tokenzier.pad_id()
+        tokens = torch.full(
+            (batch_size, total_len), pad_id, dtype=torch.long, device=device
+        )
+
+        for k, t in enumerate(prompt_tokens):
+            # populate the initial token with prompt tokens
+            tokens[k:, len(t)] = torch.tensor(t, dtype=torch.long, device=device)
+
+        eos_reached = torch.Tensor([False] * batch_size, device=device)
+        prompt_tokens_mask = tokens != pad_id  # True if token is a prompt token
+
+        for curr_pos in tqdm(range(1, total_len), decs="Generating Tokens"):
+            with torch.no_grad():
+                logits = self.model.forward(
+                    tokens[:, curr_pos - 1 : curr_pos], curr_pos
+                )
+
+            if temperature > 0:
+                # temperature is applied before softmax
+                probs = torch.softmax(logits[:, -1] / temperature, dim=-1)
+                next_token = self._sample_top_p(probs, top_p)
+
+            else:
+                # greedy approach
+                next_token = torch.argmax(logits[:, -1], dim=-1)
+
+            next_token = next_token.reshape(-1)  # flatten to 1D array
+            # only replace if it is a padding token
+            next_token = torch.where(
+                prompt_tokens_mask[:, curr_pos], tokens[:, curr_pos], next_token
+            )
+            tokens[:, curr_pos] = next_token
+            # EOS is reached only if we found an EOS token for a padding position
+            eos_reached |= (~prompt_tokens_mask[:, curr_pos]) & (
+                next_token == self.tokenzier.eos_id()
+            )
+            if all(eos_reached):
+                break
+
+        out_tokens = []
+        out_text = []
+        for prompt_index, current_prompt_tokens in enumerate(tokens.tolist()):
+            # cut to the EOS token if present
+            if self.tokenzier.eos_id() in current_prompt_tokens:
+                eos_idx = current_prompt_tokens.index(self.tokenzier.eos_id())
+                current_prompt_tokens = current_prompt_tokens[:eos_idx]
+
 
 if __name__ == "__main__":
     torch.manual_seed(0)
 
     allow_cuda = False
     device = "cuda" if torch.cuda.is_available() and allow_cuda else "cpu"
+
+    prompts = [""]
 
     model = LLaMA.build(
         checkpoints_dir="llama-2-7b",
@@ -80,4 +156,4 @@ if __name__ == "__main__":
         device=device,
     )
 
-    print("all ok")
+    # inference the model
