@@ -1,7 +1,7 @@
 from typing import Optional
 import torch
 import time
-import tqdm
+from tqdm import tqdm
 from pathlib import Path
 import json
 from sentencepiece import SentencePieceProcessor
@@ -54,7 +54,7 @@ class LLaMA:
         if device == "cuda":
             torch.set_default_tensor_type(torch.cuda.HalfTensor)
         else:
-            torch.set_default_tensor_type(torch.BFloat16Tensor)
+            torch.set_default_tensor_type(torch.float32)
 
         model = Transformer(model_args).to(device)
 
@@ -97,12 +97,12 @@ class LLaMA:
 
         for k, t in enumerate(prompt_tokens):
             # populate the initial token with prompt tokens
-            tokens[k:, len(t)] = torch.tensor(t, dtype=torch.long, device=device)
+            tokens[k, : len(t)] = torch.tensor(t, dtype=torch.long, device=device)
 
-        eos_reached = torch.Tensor([False] * batch_size, device=device)
+        eos_reached = torch.tensor([False] * batch_size, device=device)
         prompt_tokens_mask = tokens != pad_id  # True if token is a prompt token
-
-        for curr_pos in tqdm(range(1, total_len), decs="Generating Tokens"):
+        curr_iterator = tqdm(range(1, total_len), desc="Generating Tokens")
+        for curr_pos in curr_iterator:
             with torch.no_grad():
                 logits = self.model.forward(
                     tokens[:, curr_pos - 1 : curr_pos], curr_pos
@@ -158,7 +158,17 @@ if __name__ == "__main__":
     allow_cuda = False
     device = "cuda" if torch.cuda.is_available() and allow_cuda else "cpu"
 
-    prompts = [""]
+    prompts = [
+        "Simply put, the theory of relativity states that ",
+        "If Google was an Italian company founded in Milan, it would",
+        # Few shot promt
+        """Translate English to French:
+        
+        sea otter => loutre de mer
+        peppermint => menthe poivrée
+        plush girafe => girafe peluche
+        cheese =>""",
+    ]
 
     model = LLaMA.build(
         checkpoints_dir="llama-2-7b",
@@ -170,3 +180,8 @@ if __name__ == "__main__":
     )
 
     # inference the model
+    out_tokens, out_text = model.text_completion(prompts, max_gen_len=64)
+    assert len(out_text) == len(prompts)
+    for i in range(len(out_text)):
+        print(f"{out_text[i]}")
+        print("-" * 50)
