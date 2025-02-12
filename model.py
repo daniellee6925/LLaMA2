@@ -1,7 +1,7 @@
 # get all imports
 import torch
 import torch.nn as nn
-import torch.functional as F
+import torch.nn.functional as F
 import math
 from dataclasses import dataclass
 from typing import Optional
@@ -102,7 +102,7 @@ class EncoderBlock(nn.Module):
     def forward(self, x: torch.Tensor, start_pos: int, freq_complex: torch.Tensor):
         # (B, seq_len, dim) + (B, seq_len, dim) -> (B, seq_len, dim)
         h = x + self.attention.forward(self.attention_norm(x), start_pos, freq_complex)
-        out = h + self.feed_forward(self.ffn_norm(x), start_pos, freq_complex)
+        out = h + self.feed_forward(self.ffn_norm(h))
         return out
 
 

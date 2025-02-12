@@ -35,8 +35,8 @@ class LLaMA:
             assert len(checkpoints) > 0, "No checkpoint files found"
             chk_pth = checkpoints[0]
             print(f"Loading Check Point {chk_pth}")
-            checkpoint = torch.load(chk_pth, map_location="cpu")
-            print(f"Loaded Check Point in{(time.time() - prev_time):.2f}s")
+            checkpoint = torch.load(chk_pth, map_location="cpu", weights_only=True)
+            print(f"Loaded Check Point in {(time.time() - prev_time):.2f}s")
             prev_time = time.time()
         with open(Path(checkpoints_dir) / "params.json", "r") as f:
             params = json.loads(f.read())
@@ -51,10 +51,12 @@ class LLaMA:
         tokenizer.load(tokenizer_path)
         model_args.vocab_size = tokenizer.vocab_size()
 
+        """
         if device == "cuda":
             torch.set_default_tensor_type(torch.cuda.HalfTensor)
         else:
             torch.set_default_tensor_type(torch.float32)
+        """
 
         model = Transformer(model_args).to(device)
 
