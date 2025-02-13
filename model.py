@@ -33,15 +33,20 @@ class Transformer(nn.Module):
         self.args = args
         self.vocab_size = args.vocab_size
         self.n_layers = args.n_layers
+        # (vocab_size, dim)
         self.tok_embeddings = nn.Embedding(self.vocab_size, args.dim)
 
         self.layers = nn.ModuleList()
+        # add n_layers of encoder blocks
         for _ in range(args.n_layers):
             self.layers.append(EncoderBlock(args))
 
+        # rsm normalization step
         self.norm = RSMNorm(args.dim, eps=args.norm_eps)
+        # output step to change dim for (dim -> vocab size)
         self.output = nn.Linear(args.dim, self.vocab_size, bias=False)
 
+        # step to apply rotary positional embeddings
         self.freqs_complex = pre_compute_theta_pos_frequencies(
             self.args.dim // self.args.n_heads,
             self.args.max_seq_len * 2,
@@ -53,7 +58,7 @@ class Transformer(nn.Module):
         batch_size, seq_len = tokens.shape
         assert seq_len == 1, "only one token at a time can be processed"
 
-        # (B, seq_len) -> (B, seq_len, dim)
+        # (B, seq_len) -> (B, seq_len, dim), add embeddings for tokens
         h = self.tok_embeddings(tokens)
 
         # retrieve the pairs (m, theta) corresponding to the position [start pos, start pos + seq len]
@@ -62,7 +67,9 @@ class Transformer(nn.Module):
         # apply all the encoding layers
         for layer in self.layers:
             h = layer(h, start_pos, freqs_complex)
+        # apply normalization
         h = self.norm(h)
+        # apply final linear layer and set dtype to float
         output = self.output(h).float()
         return output
 
@@ -70,8 +77,8 @@ class Transformer(nn.Module):
 class RSMNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6) -> None:
         super().__init__()
+        # eps to prevent dividing by 0:gamma parameter
         self.eps = eps
-        # gamma parameter
         self.weight = nn.Parameter(torch.ones(dim))
 
     def norm(self, x: torch.Tensor):
@@ -81,6 +88,7 @@ class RSMNorm(nn.Module):
 
     def forward(self, x):
         # (B, seq_len, dim)
+        # set type as float for norm calc and reset type to original
         return self.weight * self.norm(x.float()).type_as(x)
 
 
@@ -89,9 +97,12 @@ class EncoderBlock(nn.Module):
         super().__init__()
         self.n_heads = args.n_heads
         self.dim = args.dim
+        # divide dims by num of heads
         self.head_dim = args.dim // args.n_heads
 
+        # set self attention layer
         self.attention = SelfAttention(args)
+        # set feed forward layer
         self.feed_forward = FeedForward(args)
 
         # normalization before self attention block
@@ -101,6 +112,8 @@ class EncoderBlock(nn.Module):
 
     def forward(self, x: torch.Tensor, start_pos: int, freq_complex: torch.Tensor):
         # (B, seq_len, dim) + (B, seq_len, dim) -> (B, seq_len, dim)
+        # each block goes from normalize -> self attention -> add residual layer
+        # normalize -> feed forward -> add residual layer
         h = x + self.attention.forward(self.attention_norm(x), start_pos, freq_complex)
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
@@ -118,13 +131,14 @@ class SelfAttention(nn.Module):
         # indicates the dimension of each head
         self.head_dim = args.dim // args.n_heads
 
+        # apply linear layer to transform embedding dim for K, Q, V
         self.wq = nn.Linear(args.dim, args.n_heads * self.head_dim, bias=False)
         self.wk = nn.Linear(args.dim, self.n_kv_heads * self.head_dim, bias=False)
         self.wv = nn.Linear(args.dim, self.n_kv_heads * self.head_dim, bias=False)
         # to ensure dimension matches
         self.wo = nn.Linear(args.n_heads * self.head_dim, args.dim, bias=False)
 
-        # cache for keys and values matrices
+        # initalize cache for keys and values matrices
         self.cache_k = torch.zeros(
             (args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim)
         )
@@ -134,7 +148,6 @@ class SelfAttention(nn.Module):
 
     def forward(self, x: torch.Tensor, start_pos: int, freq_complex: torch.Tensor):
         batch_size, seq_len, _ = x.shape  # (batch_size, 1, dim)
-
         # apply wq, wk, and wv to queries, keys, and values
         # (batch_size, 1, dim) ->  (batch_size, 1, num_head_q * head_dim)
         xq = self.wq(x)
@@ -142,6 +155,7 @@ class SelfAttention(nn.Module):
         xk = self.wk(x)
         xv = self.wv(x)
 
+        # expand torch dimension to apply rotary positional embeddings
         # (batch_size, 1, num_head_q * head_dim) -> # (batch_size, 1, num_head_q, head_dim)
         xq = xq.view(batch_size, seq_len, self.n_heads_q, self.head_dim)
         # (batch_size, 1, n_kv_heads * head_dim) -> (batch_size, 1, n_kv_heads, head_dim)
@@ -263,7 +277,7 @@ def repeat_KV(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     else:
         return (
             # (B, seq_len, n_kv_heads, 1, head_dim)
-            x[:, :, :, None, :]
-            .expand(batch_size, seq_len, n_kv_heads, n_rep, head_dim)
-            .reshape(batch_size, seq_len, n_kv_heads * n_rep, head_dim)
+            x[:, :, :, None, :]  # add None and expand dim
+            .expand(batch_size, seq_len, n_kv_heads, n_rep, head_dim)  # add num heads
+            .reshape(batch_size, seq_len, n_kv_heads * n_rep, head_dim)  # reshape heads
         )
